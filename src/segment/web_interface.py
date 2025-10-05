@@ -7,6 +7,7 @@ import base64
 from io import BytesIO
 from flask import Flask, render_template, request, jsonify, send_file
 import cv2
+import numpy as np
 from PIL import Image
 
 # Try relative import first, fall back to absolute
@@ -259,6 +260,104 @@ class WebInterface:
 
                 return jsonify({"status": "success", "distribution": distribution})
             except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/set_image", methods=["POST"])
+        def set_image():
+            """Set the current working image from base64 data (for grid tiles or uploaded images)"""
+            try:
+                data = request.json
+                image_data = data.get("image")
+
+                if not image_data:
+                    return jsonify({"status": "error", "message": "No image data provided"}), 400
+
+                print(f"[SET_IMAGE] Receiving image data...")
+
+                # Remove data URL prefix if present
+                if image_data.startswith("data:image"):
+                    image_data = image_data.split(",", 1)[1]
+
+                # Decode base64 image
+                img_bytes = base64.b64decode(image_data)
+                pil_image = Image.open(BytesIO(img_bytes))
+
+                # Convert to OpenCV format (BGR)
+                if pil_image.mode == "RGBA":
+                    pil_image = pil_image.convert("RGB")
+                elif pil_image.mode != "RGB":
+                    pil_image = pil_image.convert("RGB")
+
+                # Convert PIL to OpenCV (numpy array in BGR)
+                rgb_array = np.array(pil_image)
+                bgr_array = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
+
+                # Update the backend's original image
+                self.original_image = bgr_array
+
+                print(f"[SET_IMAGE] Image updated: {bgr_array.shape}")
+
+                return jsonify({"status": "success", "width": bgr_array.shape[1], "height": bgr_array.shape[0]})
+
+            except Exception as e:
+                print(f"[SET_IMAGE] Error: {e}")
+                import traceback
+
+                traceback.print_exc()
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/convert_large_image", methods=["POST"])
+        def convert_large_image():
+            """Convert uploaded image (including TIFF) to PNG for browser display"""
+            try:
+                # Get the uploaded file from request
+                if "file" not in request.files:
+                    return jsonify({"status": "error", "message": "No file uploaded"}), 400
+
+                file = request.files["file"]
+                if file.filename == "":
+                    return jsonify({"status": "error", "message": "Empty filename"}), 400
+
+                print(f"[CONVERT] Received file: {file.filename}")
+
+                # Read the image using PIL (supports TIFF and many other formats)
+                try:
+                    pil_image = Image.open(file.stream)
+                    print(f"[CONVERT] Image opened: {pil_image.size}, mode: {pil_image.mode}")
+
+                    # Convert to RGB if necessary (TIFF can be in various modes)
+                    if pil_image.mode not in ("RGB", "RGBA"):
+                        pil_image = pil_image.convert("RGB")
+                        print(f"[CONVERT] Converted to RGB mode")
+
+                    # Convert to PNG and encode as base64
+                    buffer = BytesIO()
+                    pil_image.save(buffer, format="PNG")
+                    img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+                    print(f"[CONVERT] Successfully converted to PNG, size: {len(img_base64)} bytes (base64)")
+
+                    return jsonify(
+                        {
+                            "status": "success",
+                            "image": f"data:image/png;base64,{img_base64}",
+                            "width": pil_image.width,
+                            "height": pil_image.height,
+                        }
+                    )
+
+                except Exception as img_error:
+                    print(f"[CONVERT] Error opening/converting image: {img_error}")
+                    import traceback
+
+                    traceback.print_exc()
+                    return jsonify({"status": "error", "message": f"Failed to process image: {str(img_error)}"}), 400
+
+            except Exception as e:
+                print(f"[CONVERT] Unexpected error: {e}")
+                import traceback
+
+                traceback.print_exc()
                 return jsonify({"status": "error", "message": str(e)}), 500
 
     def run(self):

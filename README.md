@@ -14,6 +14,7 @@ The tool uses **LAB color space classification** with optional **brightness/cont
 - Brightness/Contrast (B/C) zone drawing for refined classification
 - Real-time histogram and ternary plot visualization
 - Save/Load classification settings
+- Grid-based navigation for large images (40MB+ TIFF files)
 
 **Batch Processing Tab**
 - Process multiple high-resolution images (tested with 40MB+ files)
@@ -143,6 +144,33 @@ src/data/example.png
 7. **Save or Load Classifications**
    - **Save Classification** exports your settings as an XML file
    - **Load Classification** restores previous work
+
+### Large Image Grid Navigation
+
+For images too large to process at once (40MB+ TIFF files), use grid navigation:
+
+1. **Upload Large Image**
+   - Click **Upload Large Image** (amber button)
+   - Select TIFF or other large image file
+   - Automatic TIFF to PNG conversion (10-30 seconds for large files)
+
+2. **Configure Grid**
+   - Default: 30 tiles, adjustable 4-100
+   - Automatic grid layout (e.g., 30 tiles = 6×5 grid)
+   - Interactive navigator canvas
+
+3. **Navigate and Annotate**
+   - Click tiles in navigator to load
+   - Current tile: green highlight
+   - Annotated tiles: blue tint
+   - Add markers, zones, classify per tile
+   - Data auto-saved when switching tiles
+
+4. **Export Grid Data**
+   - Click **Export Grid Data**
+   - XML with per-tile annotations
+   - Local and global coordinates
+   - All markers, zones, metadata
 
 ---
 

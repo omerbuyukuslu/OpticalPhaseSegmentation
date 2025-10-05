@@ -101,6 +101,25 @@ class InteractiveSegmentation {
         this.panStart = { x: 0, y: 0 };
         this.canvasWrapper = document.getElementById('canvas-wrapper');
         
+        // Large Image Grid Navigation
+        this.largeImage = null; // Full resolution large image
+        this.largeImageData = null; // ImageData of full image
+        this.largeImageOriginalFilename = null; // Store original filename
+        this.gridSize = 30; // Number of tiles (default)
+        this.gridCols = 0;
+        this.gridRows = 0;
+        this.gridTileWidth = 0;
+        this.gridTileHeight = 0;
+        this.currentGridTile = null; // {row, col}
+        this.gridNavigatorCanvas = null;
+        this.gridNavigatorCtx = null;
+        this.gridNavigationActive = false;
+        this.gridHoverTile = null; // {row, col} for cursor preview
+        
+        // Store markers, zones, and B/C zones per tile
+        // Key: "row_col" (e.g., "0_1"), Value: {markers: [], zones: [], bcZones: []}
+        this.gridTileData = new Map();
+        
         this.init();
     }
     
@@ -116,6 +135,7 @@ class InteractiveSegmentation {
         this.setupViewToggle();
         this.setupCursorPreview();
         this.setupZoomAndPan();
+        this.setupGridNavigation();
         
         // Clear cache after DOM is ready
         this.clearCacheOnLoad();
@@ -2215,6 +2235,731 @@ class InteractiveSegmentation {
         });
     }
     
+    setupGridNavigation() {
+        console.log('setupGridNavigation called');
+        
+        // Get grid navigation DOM elements
+        this.gridNavigatorCanvas = document.getElementById('grid-navigator-canvas');
+        if (this.gridNavigatorCanvas) {
+            this.gridNavigatorCtx = this.gridNavigatorCanvas.getContext('2d');
+            console.log('Grid navigator canvas found');
+        } else {
+            console.error('Grid navigator canvas not found!');
+        }
+        
+        // Upload large image handler
+        const uploadLargeInput = document.getElementById('upload-large-image-input');
+        if (uploadLargeInput) {
+            console.log('Upload large image input found, adding event listener');
+            uploadLargeInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    console.log('Upload large image - File selected:', file.name, 'Type:', file.type, 'Size:', file.size);
+                    
+                    // Check if it's an image (either by MIME type or file extension)
+                    const isImage = file.type.startsWith('image/') || 
+                                   file.name.match(/\.(png|jpg|jpeg|gif|bmp|tif|tiff|webp)$/i);
+                    
+                    if (isImage) {
+                        this.loadLargeImage(file);
+                    } else {
+                        alert('Please select a valid image file (PNG, JPG, TIF, etc.).');
+                    }
+                }
+                e.target.value = '';
+            });
+        } else {
+            console.error('Upload large image input not found!');
+        }
+        
+        // Grid size apply button
+        const applyGridBtn = document.getElementById('apply-grid-size-btn');
+        if (applyGridBtn) {
+            applyGridBtn.addEventListener('click', () => {
+                const gridSizeInput = document.getElementById('grid-size-input');
+                if (gridSizeInput) {
+                    this.gridSize = parseInt(gridSizeInput.value) || 30;
+                    this.calculateGridDimensions();
+                    this.renderGridNavigator();
+                }
+            });
+        }
+        
+        // Export grid data button
+        const exportGridDataBtn = document.getElementById('export-grid-data-btn');
+        if (exportGridDataBtn) {
+            exportGridDataBtn.addEventListener('click', () => {
+                this.exportGridData();
+            });
+        }
+        
+        // Close grid mode button
+        const closeGridBtn = document.getElementById('close-grid-btn');
+        if (closeGridBtn) {
+            closeGridBtn.addEventListener('click', () => {
+                this.closeGridMode();
+            });
+        }
+        
+        // Grid navigator canvas mouse events
+        if (this.gridNavigatorCanvas) {
+            this.gridNavigatorCanvas.addEventListener('mousemove', (e) => {
+                if (this.gridNavigationActive) {
+                    this.handleGridHover(e);
+                }
+            });
+            
+            this.gridNavigatorCanvas.addEventListener('mouseleave', () => {
+                if (this.gridNavigationActive) {
+                    this.gridHoverTile = null;
+                    this.updateGridCursorInfo();
+                    this.renderGridNavigator();
+                }
+            });
+            
+            this.gridNavigatorCanvas.addEventListener('click', (e) => {
+                if (this.gridNavigationActive) {
+                    this.handleGridClick(e);
+                }
+            });
+        }
+    }
+    
+    loadLargeImage(file) {
+        console.log('loadLargeImage called with file:', file.name);
+        this.setStatus('Loading large image...', 'info');
+        
+        // Show loading indicator
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.style.display = 'flex';
+            this.updateLoadingText('Loading Large Image', 'Preparing to process ' + file.name);
+        }
+        
+        // Store original filename for export
+        this.largeImageOriginalFilename = file.name;
+        
+        // Check if it's a TIFF file or any format that might need server-side conversion
+        const needsConversion = file.name.match(/\.(tif|tiff)$/i) || file.size > 10 * 1024 * 1024; // TIFF or large files
+        
+        if (needsConversion) {
+            console.log('File needs server-side conversion (TIFF or large file)');
+            this.convertAndLoadLargeImage(file);
+        } else {
+            // Handle regular image formats (PNG, JPG, etc.) directly in browser
+            console.log('Loading image directly in browser');
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                console.log('FileReader loaded, creating Image object...');
+                const img = new Image();
+                img.onload = () => {
+                    console.log('Image loaded successfully:', img.width, 'x', img.height);
+                    this.processLoadedImage(img);
+                };
+                img.onerror = () => {
+                    console.error('Error loading image');
+                    const loadingIndicator = document.getElementById('loading-indicator');
+                    if (loadingIndicator) loadingIndicator.style.display = 'flex';
+                    this.setStatus('Error loading image. Trying server-side conversion...', 'warning');
+                    // Fallback to server-side conversion
+                    this.convertAndLoadLargeImage(file);
+                };
+                img.src = event.target.result;
+            };
+            reader.onerror = () => {
+                console.error('Error reading file');
+                this.setStatus('Error reading file', 'error');
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+    
+    convertAndLoadLargeImage(file) {
+        console.log('Converting image on server:', file.name);
+        this.setStatus('Converting image on server (this may take a moment for large files)...', 'info');
+        
+        // Show loading indicator
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.style.display = 'flex';
+            this.updateLoadingText('Converting Image on Server', 'Processing TIFF format - this may take 10-30 seconds for large files');
+        }
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        fetch('/convert_large_image', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                console.log('Server conversion successful:', data.width, 'x', data.height);
+                
+                this.updateLoadingText('Loading Converted Image', `Image size: ${data.width}x${data.height} pixels`);
+                
+                // Create image from the converted data URL
+                const img = new Image();
+                img.onload = () => {
+                    console.log('Converted image loaded in browser');
+                    this.processLoadedImage(img);
+                };
+                img.onerror = () => {
+                    console.error('Error loading converted image');
+                    const loadingIndicator = document.getElementById('loading-indicator');
+                    if (loadingIndicator) loadingIndicator.style.display = 'none';
+                    this.setStatus('Error loading converted image', 'error');
+                };
+                img.src = data.image;
+            } else {
+                console.error('Server conversion failed:', data.message);
+                const loadingIndicator = document.getElementById('loading-indicator');
+                if (loadingIndicator) loadingIndicator.style.display = 'none';
+                this.setStatus('Error converting image: ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error during server conversion:', error);
+            const loadingIndicator = document.getElementById('loading-indicator');
+            if (loadingIndicator) loadingIndicator.style.display = 'none';
+            this.setStatus('Error communicating with server: ' + error.message, 'error');
+        });
+    }
+    
+    processLoadedImage(img) {
+        console.log('Processing loaded image:', img.width, 'x', img.height);
+        
+        // Store the large image
+        this.largeImage = img;
+        
+        // Create ImageData for the full image
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(img, 0, 0);
+        this.largeImageData = tempCtx.getImageData(0, 0, img.width, img.height);
+        
+        console.log('ImageData created');
+        
+        // Calculate grid dimensions
+        this.calculateGridDimensions();
+        console.log('Grid dimensions calculated:', this.gridCols, 'x', this.gridRows);
+        
+        // Show grid navigation container
+        const gridContainer = document.getElementById('grid-navigation-container');
+        if (gridContainer) {
+            gridContainer.style.display = 'block';
+            console.log('Grid container shown');
+        } else {
+            console.error('Grid container not found!');
+        }
+        
+        // Activate grid mode
+        this.gridNavigationActive = true;
+        
+        // Render the grid navigator
+        this.renderGridNavigator();
+        console.log('Grid navigator rendered');
+        
+        // Load the first tile (0, 0) into the main canvas
+        this.currentGridTile = { row: 0, col: 0 };
+        this.loadGridTile(0, 0);
+        
+        // Hide loading indicator (will be shown again by loadGridTile)
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.style.display = 'none';
+        }
+        
+        this.setStatus(`Large image loaded (${img.width}x${img.height}px). Grid: ${this.gridCols}x${this.gridRows} tiles.`, 'success');
+    }
+    
+    calculateGridDimensions() {
+        if (!this.largeImage) return;
+        
+        // Calculate grid layout (as square as possible)
+        const totalTiles = this.gridSize;
+        this.gridCols = Math.ceil(Math.sqrt(totalTiles));
+        this.gridRows = Math.ceil(totalTiles / this.gridCols);
+        
+        // Calculate tile dimensions
+        this.gridTileWidth = Math.floor(this.largeImage.width / this.gridCols);
+        this.gridTileHeight = Math.floor(this.largeImage.height / this.gridRows);
+    }
+    
+    renderGridNavigator() {
+        if (!this.gridNavigatorCanvas || !this.largeImage) return;
+        
+        const canvas = this.gridNavigatorCanvas;
+        const ctx = this.gridNavigatorCtx;
+        
+        // Set canvas to a fixed size to prevent resizing
+        const parentWidth = canvas.parentElement.clientWidth;
+        canvas.width = Math.min(parentWidth - 4, 800); // Max 800px width
+        canvas.height = 150; // Fixed height
+        
+        // Calculate scale to fit the large image in the navigator
+        const scaleX = canvas.width / this.largeImage.width;
+        const scaleY = canvas.height / this.largeImage.height;
+        const scale = Math.min(scaleX, scaleY);
+        
+        const displayWidth = this.largeImage.width * scale;
+        const displayHeight = this.largeImage.height * scale;
+        const offsetX = (canvas.width - displayWidth) / 2;
+        const offsetY = (canvas.height - displayHeight) / 2;
+        
+        // Clear canvas
+        ctx.fillStyle = '#1f2937';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw the large image (scaled down)
+        ctx.drawImage(this.largeImage, offsetX, offsetY, displayWidth, displayHeight);
+        
+        // Draw grid lines
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1;
+        
+        const cellWidth = displayWidth / this.gridCols;
+        const cellHeight = displayHeight / this.gridRows;
+        
+        // Vertical lines
+        for (let col = 0; col <= this.gridCols; col++) {
+            const x = offsetX + col * cellWidth;
+            ctx.beginPath();
+            ctx.moveTo(x, offsetY);
+            ctx.lineTo(x, offsetY + displayHeight);
+            ctx.stroke();
+        }
+        
+        // Horizontal lines
+        for (let row = 0; row <= this.gridRows; row++) {
+            const y = offsetY + row * cellHeight;
+            ctx.beginPath();
+            ctx.moveTo(offsetX, y);
+            ctx.lineTo(offsetX + displayWidth, y);
+            ctx.stroke();
+        }
+        
+        // Draw indicators for tiles with saved data
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.4)'; // Blue tint for tiles with data
+        for (const [tileKey, tileData] of this.gridTileData) {
+            const [row, col] = tileKey.split('_').map(Number);
+            if (row < this.gridRows && col < this.gridCols) {
+                const hasData = (tileData.markers && tileData.markers.length > 0) ||
+                               (tileData.zones && tileData.zones.length > 0) ||
+                               (tileData.bcZones && tileData.bcZones.length > 0);
+                
+                if (hasData) {
+                    const x = offsetX + col * cellWidth;
+                    const y = offsetY + row * cellHeight;
+                    ctx.fillRect(x + 1, y + 1, cellWidth - 2, cellHeight - 2);
+                    
+                    // Add a small data indicator dot in corner
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.beginPath();
+                    ctx.arc(x + 8, y + 8, 3, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+                }
+            }
+        }
+        
+        // Highlight current tile
+        if (this.currentGridTile) {
+            const { row, col } = this.currentGridTile;
+            const x = offsetX + col * cellWidth;
+            const y = offsetY + row * cellHeight;
+            
+            ctx.fillStyle = 'rgba(34, 197, 94, 0.3)';
+            ctx.fillRect(x, y, cellWidth, cellHeight);
+            ctx.strokeStyle = '#22c55e';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, cellWidth, cellHeight);
+        }
+        
+        // Highlight hover tile
+        if (this.gridHoverTile && (!this.currentGridTile || 
+            this.gridHoverTile.row !== this.currentGridTile.row || 
+            this.gridHoverTile.col !== this.currentGridTile.col)) {
+            const { row, col } = this.gridHoverTile;
+            const x = offsetX + col * cellWidth;
+            const y = offsetY + row * cellHeight;
+            
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.2)';
+            ctx.fillRect(x, y, cellWidth, cellHeight);
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, cellWidth, cellHeight);
+        }
+        
+        // Store scale and offset for mouse interaction
+        this.gridNavigatorScale = scale;
+        this.gridNavigatorOffsetX = offsetX;
+        this.gridNavigatorOffsetY = offsetY;
+        this.gridNavigatorDisplayWidth = displayWidth;
+        this.gridNavigatorDisplayHeight = displayHeight;
+    }
+    
+    handleGridHover(e) {
+        const rect = this.gridNavigatorCanvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Check if mouse is within the image bounds
+        if (mouseX < this.gridNavigatorOffsetX || 
+            mouseX > this.gridNavigatorOffsetX + this.gridNavigatorDisplayWidth ||
+            mouseY < this.gridNavigatorOffsetY || 
+            mouseY > this.gridNavigatorOffsetY + this.gridNavigatorDisplayHeight) {
+            this.gridHoverTile = null;
+            this.updateGridCursorInfo();
+            this.renderGridNavigator();
+            return;
+        }
+        
+        // Calculate which tile the mouse is over
+        const cellWidth = this.gridNavigatorDisplayWidth / this.gridCols;
+        const cellHeight = this.gridNavigatorDisplayHeight / this.gridRows;
+        
+        const col = Math.floor((mouseX - this.gridNavigatorOffsetX) / cellWidth);
+        const row = Math.floor((mouseY - this.gridNavigatorOffsetY) / cellHeight);
+        
+        // Validate row and col
+        if (row >= 0 && row < this.gridRows && col >= 0 && col < this.gridCols) {
+            this.gridHoverTile = { row, col };
+        } else {
+            this.gridHoverTile = null;
+        }
+        
+        this.updateGridCursorInfo();
+        this.renderGridNavigator();
+    }
+    
+    handleGridClick(e) {
+        if (!this.gridHoverTile) return;
+        
+        const { row, col } = this.gridHoverTile;
+        this.loadGridTile(row, col);
+    }
+    
+    loadGridTile(row, col) {
+        if (!this.largeImageData) return;
+        
+        // Show loading indicator
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.style.display = 'flex';
+            this.updateLoadingText(`Loading Tile [${row}, ${col}]`, 'Extracting region from large image...');
+        }
+        this.setStatus(`Loading tile [${row}, ${col}]...`, 'info');
+        
+        // Use setTimeout to allow UI to update before processing
+        setTimeout(() => {
+            this.processTileLoading(row, col);
+        }, 10);
+    }
+    
+    processTileLoading(row, col) {
+        // Save current tile data before switching (if we have a current tile)
+        if (this.currentGridTile !== null) {
+            this.saveTileData(this.currentGridTile.row, this.currentGridTile.col);
+        }
+        
+        // Calculate pixel coordinates for this tile
+        const startX = col * this.gridTileWidth;
+        const startY = row * this.gridTileHeight;
+        
+        // Calculate actual tile dimensions (handle edge tiles that might be smaller)
+        const actualWidth = Math.min(this.gridTileWidth, this.largeImage.width - startX);
+        const actualHeight = Math.min(this.gridTileHeight, this.largeImage.height - startY);
+        
+        // Extract the tile from the large image
+        const tileCanvas = document.createElement('canvas');
+        tileCanvas.width = actualWidth;
+        tileCanvas.height = actualHeight;
+        const tileCtx = tileCanvas.getContext('2d');
+        
+        // Draw the tile portion
+        tileCtx.drawImage(
+            this.largeImage,
+            startX, startY, actualWidth, actualHeight,
+            0, 0, actualWidth, actualHeight
+        );
+        
+        // Load this tile as the current image
+        const tileDataURL = tileCanvas.toDataURL();
+        
+        // Update current tile
+        this.currentGridTile = { row, col };
+        
+        // Clear existing data
+        this.markers = [];
+        this.zones = [];
+        this.bcZones = [];
+        
+        // Upload tile to backend for pixel sampling
+        this.uploadImageToBackend(tileDataURL);
+        
+        // Load the tile into the main canvas
+        this.loadImage(tileDataURL);
+        
+        // Ensure canvas container is visible
+        const canvasContainer = document.getElementById('canvas-container');
+        const noImagePlaceholder = document.getElementById('no-image-placeholder');
+        if (canvasContainer) {
+            canvasContainer.style.display = 'inline-block';
+        }
+        if (noImagePlaceholder) {
+            noImagePlaceholder.style.display = 'none';
+        }
+        
+        // Restore tile data after image is loaded (use setTimeout to ensure image is loaded)
+        setTimeout(() => {
+            this.restoreTileData(row, col);
+        }, 100);
+        
+        // Update grid navigator to show new current tile
+        this.renderGridNavigator();
+        
+        // Update cursor info
+        this.updateGridCursorInfo();
+        
+        // Hide loading indicator
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.style.display = 'none';
+        }
+        
+        this.setStatus(`Loaded tile [${row}, ${col}] (${actualWidth}x${actualHeight}px)`, 'success');
+    }
+    
+    saveTileData(row, col) {
+        const tileKey = `${row}_${col}`;
+        
+        // Ensure arrays exist before accessing length
+        const markers = this.markers || [];
+        const zones = this.zones || [];
+        const bcZones = this.bcZones || [];
+        
+        console.log(`Saving data for tile [${row}, ${col}]`, {
+            markers: markers.length,
+            zones: zones.length,
+            bcZones: bcZones.length
+        });
+        
+        // Deep copy the data to avoid references
+        this.gridTileData.set(tileKey, {
+            markers: JSON.parse(JSON.stringify(markers)),
+            zones: JSON.parse(JSON.stringify(zones)),
+            bcZones: JSON.parse(JSON.stringify(bcZones))
+        });
+    }
+    
+    restoreTileData(row, col) {
+        const tileKey = `${row}_${col}`;
+        const tileData = this.gridTileData.get(tileKey);
+        
+        if (tileData) {
+            console.log(`Restoring data for tile [${row}, ${col}]`, {
+                markers: tileData.markers.length,
+                zones: tileData.zones.length,
+                bcZones: tileData.bcZones.length
+            });
+            
+            // Restore the data
+            this.markers = JSON.parse(JSON.stringify(tileData.markers));
+            this.zones = JSON.parse(JSON.stringify(tileData.zones));
+            this.bcZones = JSON.parse(JSON.stringify(tileData.bcZones));
+            
+            // Redraw everything
+            this.redrawCanvas();
+        } else {
+            console.log(`No saved data for tile [${row}, ${col}], starting fresh`);
+        }
+    }
+    
+    updateGridCursorInfo() {
+        const cursorInfo = document.getElementById('grid-cursor-info');
+        if (!cursorInfo) return;
+        
+        if (this.gridHoverTile) {
+            const { row, col } = this.gridHoverTile;
+            cursorInfo.textContent = `Hover: Tile [${row}, ${col}]`;
+        } else if (this.currentGridTile) {
+            const { row, col } = this.currentGridTile;
+            cursorInfo.textContent = `Current: Tile [${row}, ${col}]`;
+        } else {
+            cursorInfo.textContent = 'Hover over grid to preview';
+        }
+    }
+    
+    closeGridMode() {
+        // Save current tile data before closing
+        if (this.currentGridTile !== null) {
+            this.saveTileData(this.currentGridTile.row, this.currentGridTile.col);
+        }
+        
+        // Hide grid navigation container
+        const gridContainer = document.getElementById('grid-navigation-container');
+        if (gridContainer) {
+            gridContainer.style.display = 'none';
+        }
+        
+        // Deactivate grid mode
+        this.gridNavigationActive = false;
+        
+        // Clear grid data (but keep gridTileData for potential re-opening)
+        this.largeImage = null;
+        this.largeImageData = null;
+        this.currentGridTile = null;
+        this.gridHoverTile = null;
+        
+        // Clear the grid navigator canvas
+        if (this.gridNavigatorCanvas) {
+            this.gridNavigatorCtx.clearRect(0, 0, this.gridNavigatorCanvas.width, this.gridNavigatorCanvas.height);
+        }
+        
+        this.setStatus('Grid mode closed', 'info');
+    }
+    
+    exportGridData() {
+        // Save current tile data first
+        if (this.currentGridTile !== null) {
+            this.saveTileData(this.currentGridTile.row, this.currentGridTile.col);
+        }
+        
+        console.log('Exporting grid data...', {
+            tiles: this.gridTileData.size,
+            phases: this.phases.size
+        });
+        
+        // Create XML document
+        let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+        xml += '<GridDataExport>\n';
+        xml += `  <ImageInfo>\n`;
+        xml += `    <Filename>${this.escapeXml(this.largeImageOriginalFilename || 'unknown')}</Filename>\n`;
+        xml += `    <GridSize>${this.gridSize}</GridSize>\n`;
+        xml += `    <GridCols>${this.gridCols}</GridCols>\n`;
+        xml += `    <GridRows>${this.gridRows}</GridRows>\n`;
+        xml += `    <TileWidth>${this.gridTileWidth}</TileWidth>\n`;
+        xml += `    <TileHeight>${this.gridTileHeight}</TileHeight>\n`;
+        xml += `    <ExportDate>${new Date().toISOString()}</ExportDate>\n`;
+        xml += `  </ImageInfo>\n`;
+        
+        // Export phase definitions
+        xml += '  <Phases>\n';
+        for (const [id, phase] of this.phases) {
+            xml += `    <Phase id="${id}">\n`;
+            xml += `      <Name>${this.escapeXml(phase.name)}</Name>\n`;
+            xml += `      <Color>${this.escapeXml(phase.color)}</Color>\n`;
+            xml += `    </Phase>\n`;
+        }
+        xml += '  </Phases>\n';
+        
+        // Export tile data
+        xml += '  <Tiles>\n';
+        for (const [tileKey, tileData] of this.gridTileData) {
+            const [row, col] = tileKey.split('_').map(Number);
+            
+            // Calculate global pixel coordinates for this tile
+            const startX = col * this.gridTileWidth;
+            const startY = row * this.gridTileHeight;
+            
+            xml += `    <Tile row="${row}" col="${col}" startX="${startX}" startY="${startY}">\n`;
+            
+            // Export markers
+            if (tileData.markers && tileData.markers.length > 0) {
+                xml += '      <Markers>\n';
+                for (const marker of tileData.markers) {
+                    // Convert local tile coordinates to global image coordinates
+                    const globalX = startX + marker.x;
+                    const globalY = startY + marker.y;
+                    
+                    xml += `        <Marker phaseId="${marker.phaseId}" `;
+                    xml += `localX="${marker.x}" localY="${marker.y}" `;
+                    xml += `globalX="${globalX}" globalY="${globalY}" />\n`;
+                }
+                xml += '      </Markers>\n';
+            }
+            
+            // Export LAB zones
+            if (tileData.zones && tileData.zones.length > 0) {
+                xml += '      <LABZones>\n';
+                for (let i = 0; i < tileData.zones.length; i++) {
+                    const zone = tileData.zones[i];
+                    xml += `        <Zone index="${i}" phaseId="${zone.phaseId}" type="${zone.type}">\n`;
+                    
+                    if (zone.type === 'polygon' && zone.vertices) {
+                        xml += '          <Vertices>\n';
+                        for (const vertex of zone.vertices) {
+                            const globalX = startX + vertex.x;
+                            const globalY = startY + vertex.y;
+                            xml += `            <Vertex localX="${vertex.x}" localY="${vertex.y}" globalX="${globalX}" globalY="${globalY}" />\n`;
+                        }
+                        xml += '          </Vertices>\n';
+                    } else if (zone.type === 'circle') {
+                        const globalCenterX = startX + zone.centerX;
+                        const globalCenterY = startY + zone.centerY;
+                        xml += `          <Circle localCenterX="${zone.centerX}" localCenterY="${zone.centerY}" `;
+                        xml += `globalCenterX="${globalCenterX}" globalCenterY="${globalCenterY}" radius="${zone.radius}" />\n`;
+                    }
+                    
+                    xml += '        </Zone>\n';
+                }
+                xml += '      </LABZones>\n';
+            }
+            
+            // Export B/C zones
+            if (tileData.bcZones && tileData.bcZones.length > 0) {
+                xml += '      <BCZones>\n';
+                for (let i = 0; i < tileData.bcZones.length; i++) {
+                    const zone = tileData.bcZones[i];
+                    xml += `        <BCZone index="${i}" type="${zone.type || 'B'}">\n`;
+                    xml += '          <Vertices>\n';
+                    for (const vertex of zone.vertices) {
+                        const globalX = startX + vertex.x;
+                        const globalY = startY + vertex.y;
+                        xml += `            <Vertex localX="${vertex.x}" localY="${vertex.y}" globalX="${globalX}" globalY="${globalY}" />\n`;
+                    }
+                    xml += '          </Vertices>\n';
+                    xml += '        </BCZone>\n';
+                }
+                xml += '      </BCZones>\n';
+            }
+            
+            xml += '    </Tile>\n';
+        }
+        xml += '  </Tiles>\n';
+        xml += '</GridDataExport>';
+        
+        // Download the XML file
+        const blob = new Blob([xml], { type: 'application/xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+        const filename = (this.largeImageOriginalFilename || 'image').replace(/\.[^.]+$/, '');
+        a.download = `${filename}_grid_data_${timestamp}.xml`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        this.setStatus(`Grid data exported: ${this.gridTileData.size} tiles with data`, 'success');
+    }
+    
+    escapeXml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+    }
+    
     addNewPhase() {
         const nameInput = document.getElementById('new-phase-name');
         const colorInput = document.getElementById('new-phase-color');
@@ -4105,22 +4850,8 @@ class InteractiveSegmentation {
             
             const sampleData = await sampleResponse.json();
             
-            // Add point to backend
-            const response = await fetch('/add_point', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    x: pos.x,
-                    y: pos.y,
-                    phase_id: this.currentPhaseId,
-                    brush_size: brushSize
-                })
-            });
-            
-            if (response.ok && sampleData.status === 'success') {
-                // Draw marker on canvas
+            if (sampleData.status === 'success') {
+                // Draw marker on canvas (this also adds to this.markers array)
                 this.drawMarker(pos.x, pos.y, this.currentPhaseId, brushSize);
                 
                 // Store sample in phase for statistics
@@ -4134,21 +4865,15 @@ class InteractiveSegmentation {
                     rgb: sampleData.rgb
                 });
                 
-                // Update phase statistics display
-                if (sampleData.stats) {
-                    this.updateSamplingStats(sampleData.stats);
-                    
-                    // Store in phase
-                    phase.targetRGB = sampleData.stats.mean_rgb;
-                    phase.tolerance = this.colorTolerance;
-                }
-                
                 // Update ternary plot and B/C plot to show the new sample
                 this.drawTernaryPlot();
                 this.drawBrightnessContrastPlot();
                 
                 const phaseName = phase.name;
                 this.setStatus(`✓ Added ${phaseName} marker at (${pos.x}, ${pos.y}) - RGB(${sampleData.rgb[0]}, ${sampleData.rgb[1]}, ${sampleData.rgb[2]})`, 'success');
+            } else {
+                console.error('Failed to sample pixel:', sampleData);
+                this.setStatus('Failed to sample pixel at this location', 'error');
             }
             
         } catch (error) {
@@ -4157,33 +4882,23 @@ class InteractiveSegmentation {
         }
     }
     
-    async erasePoint(e) {
+    erasePoint(e) {
         const pos = this.getMousePos(e);
         const brushSize = parseInt(this.brushSize.value);
         
-        try {
-            const response = await fetch('/add_point', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    x: pos.x,
-                    y: pos.y,
-                    phase_id: 0, // 0 means erase
-                    brush_size: brushSize
-                })
-            });
-            
-            if (response.ok) {
-                this.eraseMarker(pos.x, pos.y, brushSize);
-                this.setStatus('Erased marker', 'info');
-            }
-            
-        } catch (error) {
-            console.error('Error erasing point:', error);
-            this.setStatus('Error erasing point', 'error');
-        }
+        // Remove markers within brush radius
+        const radiusSquared = brushSize * brushSize;
+        this.markers = this.markers.filter(marker => {
+            const dx = marker.x - pos.x;
+            const dy = marker.y - pos.y;
+            const distSquared = dx * dx + dy * dy;
+            return distSquared > radiusSquared;
+        });
+        
+        // Redraw overlay without erased markers
+        this.redrawOverlay();
+        
+        this.setStatus('Erased markers', 'info');
     }
     
     redrawOverlay(cursorPos = null) {
@@ -4493,6 +5208,43 @@ class InteractiveSegmentation {
                 this.statusContainer.classList.add('border-l-4', 'border-blue-500');
         }
     }
+    
+    updateLoadingText(mainText, subText = '') {
+        const loadingStatusText = document.getElementById('loading-status-text');
+        const loadingSubstatusText = document.getElementById('loading-substatus-text');
+        
+        if (loadingStatusText) {
+            loadingStatusText.textContent = mainText;
+        }
+        if (loadingSubstatusText) {
+            loadingSubstatusText.textContent = subText;
+        }
+    }
+    
+    async uploadImageToBackend(imageDataURL) {
+        /**
+         * Upload current image to backend so pixel sampling works
+         * This is essential for grid mode where tiles are extracted client-side
+         */
+        try {
+            const response = await fetch('/set_image', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ image: imageDataURL })
+            });
+            
+            const result = await response.json();
+            if (result.status === 'success') {
+                console.log(`[UPLOAD] Image uploaded to backend: ${result.width}x${result.height}px`);
+            } else {
+                console.error('[UPLOAD] Failed to upload image:', result.message);
+            }
+        } catch (error) {
+            console.error('[UPLOAD] Error uploading image to backend:', error);
+        }
+    }
 }
 
 // Initialize the application when the page loads
@@ -4516,6 +5268,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     segmentation.classificationStats = null;
                     const viewToggle = document.getElementById('view-toggle-container');
                     if (viewToggle) viewToggle.style.display = 'none';
+                    
+                    // Upload to backend for pixel sampling
+                    segmentation.uploadImageToBackend(event.target.result);
                     
                     // Load the uploaded image
                     segmentation.loadImage(event.target.result);

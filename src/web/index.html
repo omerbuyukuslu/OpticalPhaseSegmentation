@@ -60,6 +60,24 @@
         .tab-content.active {
             display: block;
         }
+        
+        /* Grid Navigator Styling */
+        #grid-navigator-canvas {
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            display: block;
+        }
+        
+        #grid-navigator-canvas:hover {
+            border-color: #f59e0b;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+        }
+        
+        /* Prevent loading indicator from shifting layout */
+        #loading-indicator {
+            z-index: 10;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -241,13 +259,57 @@
                     <div class="flex justify-center gap-3 mb-3">
                         <label for="upload-image-input" 
                                class="px-5 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors font-medium shadow-md cursor-pointer flex items-center gap-2">
-                            Upload Image
+                            📤 Upload Image
                             <input type="file" id="upload-image-input" accept="image/*" class="hidden">
+                        </label>
+                        <label for="upload-large-image-input" 
+                               class="px-5 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 transition-colors font-medium shadow-md cursor-pointer flex items-center gap-2">
+                            🗂️ Upload Large Image
+                            <input type="file" id="upload-large-image-input" accept="image/*" class="hidden">
                         </label>
                         <button id="load-example-btn" 
                                 class="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors font-medium shadow-md flex items-center gap-2">
-                            Load Example
+                            📋 Load Example
                         </button>
+                    </div>
+                    
+                    <!-- Grid Navigation (Hidden by default) -->
+                    <div id="grid-navigation-container" class="mb-3" style="display: none;">
+                        <div class="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-lg p-3">
+                            <div class="flex justify-between items-center mb-2">
+                                <div class="flex items-center gap-3">
+                                    <h4 class="text-sm font-semibold text-gray-800">📐 Grid Navigation</h4>
+                                    <span id="grid-info" class="text-xs text-gray-600"></span>
+                                </div>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <label class="text-xs font-medium text-gray-700">Grid Size:</label>
+                                    <input type="number" id="grid-size-input" value="30" min="4" max="100" step="1"
+                                           class="w-16 px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                    <button id="apply-grid-size-btn" 
+                                            class="px-3 py-1 bg-amber-600 text-white text-xs rounded-md hover:bg-amber-700 transition-colors">
+                                        Apply
+                                    </button>
+                                    <button id="export-grid-data-btn" 
+                                            class="px-3 py-1 bg-green-600 text-white text-xs rounded-md hover:bg-green-700 transition-colors">
+                                        💾 Export Grid Data
+                                    </button>
+                                    <button id="close-grid-btn" 
+                                            class="px-3 py-1 bg-gray-500 text-white text-xs rounded-md hover:bg-gray-600 transition-colors">
+                                        ❌ Close Grid Mode
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="bg-white rounded-lg p-2 border border-amber-200">
+                                <div style="position: relative; width: 100%; height: 150px;">
+                                    <canvas id="grid-navigator-canvas" 
+                                            class="cursor-pointer border border-gray-300 mx-auto block"
+                                            style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); height: 150px;"></canvas>
+                                </div>
+                                <div id="grid-cursor-info" class="text-center text-xs text-gray-600 mt-1">
+                                    Hover over grid to preview | Click to load tile
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="relative bg-gray-100 rounded-lg overflow-hidden" id="canvas-wrapper" style="max-width: 100%; max-height: 55vh; overflow: auto;">
@@ -264,10 +326,11 @@
                                 <p class="text-gray-500 text-sm">Upload an image or load the example to get started</p>
                             </div>
                         </div>
-                        <div id="loading-indicator" class="absolute inset-0 flex items-center justify-center bg-gray-100" style="display: none;">
+                        <div id="loading-indicator" class="absolute inset-0 flex items-center justify-center bg-white bg-opacity-90" style="display: none; z-index: 100;">
                             <div class="text-center">
-                                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-                                <p class="text-gray-600">Loading image...</p>
+                                <div class="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-amber-600 mx-auto mb-4"></div>
+                                <p class="text-gray-800 font-semibold text-lg" id="loading-status-text">Loading image...</p>
+                                <p class="text-gray-600 text-sm mt-2" id="loading-substatus-text">Please wait</p>
                             </div>
                         </div>
                     </div>
