@@ -4,17 +4,18 @@ Flask-based web interface for LAB color space classification
 
 import os
 import base64
-import json
 from io import BytesIO
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import cv2
 from PIL import Image
 
 # Try relative import first, fall back to absolute
 try:
     from .pipeline import preprocess_image
+    from .batch_backend import batch_backend
 except ImportError:
     from pipeline import preprocess_image
+    from batch_backend import batch_backend
 
 
 class WebInterface:
@@ -45,15 +46,17 @@ class WebInterface:
         )
 
         self.setup_routes()
-        
+
         # Add cache-busting headers for static files
         @self.app.after_request
         def add_header(response):
             """Add headers to prevent caching of JavaScript and CSS"""
-            if request.path.endswith('.js') or request.path.endswith('.css'):
-                response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
-                response.headers['Pragma'] = 'no-cache'
-                response.headers['Expires'] = '-1'
+            if request.path.endswith(".js") or request.path.endswith(".css"):
+                response.headers["Cache-Control"] = (
+                    "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+                )
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "-1"
             return response
 
     def setup_routes(self):
@@ -62,6 +65,10 @@ class WebInterface:
         @self.app.route("/")
         def index():
             return render_template("index.html")
+
+        @self.app.route("/batch.html")
+        def batch_page():
+            return render_template("batch.html")
 
         @self.app.route("/get_image")
         def get_image():
@@ -132,12 +139,134 @@ class WebInterface:
             """Legacy endpoint - use XML import instead"""
             return jsonify({"status": "success", "message": 'Use "Load Classification" for LAB-based workflow'})
 
+        @self.app.route("/batch/process", methods=["POST"])
+        def batch_process():
+            """Process multiple images with saved classification settings (legacy - client-side)"""
+            try:
+                data = request.json
+                images_data = data.get("images", [])
+                classification_config = data.get("classification", {})
+
+                from .batch_processor import BatchProcessor
+
+                processor = BatchProcessor(classification_config)
+                results = processor.process_image_batch(images_data)
+
+                return jsonify({"status": "success", "results": results})
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/batch/backend/create_job", methods=["POST"])
+        def batch_create_job():
+            """Create a new batch processing job"""
+            try:
+                job_id = batch_backend.create_job()
+                return jsonify({"status": "success", "job_id": job_id})
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/batch/backend/process", methods=["POST"])
+        def batch_backend_process():
+            """Process images on backend (for high-resolution images)"""
+            try:
+                print("\n[BACKEND] ======== BATCH PROCESS REQUEST RECEIVED ========")
+                data = request.json
+                job_id = data.get("job_id")
+                images_data = data.get("images", [])
+                classification = data.get("classification", {})
+
+                print(f"[BACKEND] Job ID: {job_id}")
+                print(f"[BACKEND] Number of images: {len(images_data)}")
+
+                if not job_id:
+                    return jsonify({"status": "error", "message": "job_id is required"}), 400
+
+                # Debug: Log classification structure
+                print("\n[BACKEND] Received classification:")
+                print(f"  - Keys: {list(classification.keys())}")
+                if "phases" in classification:
+                    phases = classification["phases"]
+                    print(f"  - Number of phases: {len(phases)}")
+                    for phase_id, phase_data in phases.items():
+                        print(f"  - Phase {phase_id}: {phase_data.get('name', 'unnamed')}")
+                        if "labRanges" in phase_data and phase_data["labRanges"]:
+                            print(f"    Has LAB ranges: YES")
+                        else:
+                            print(f"    Has LAB ranges: NO")
+                        if "bcZone" in phase_data and phase_data["bcZone"]:
+                            print(f"    Has B/C zone: YES ({len(phase_data['bcZone'])} vertices)")
+                        else:
+                            print(f"    Has B/C zone: NO")
+
+                print(f"\n[BACKEND] Starting batch processing...")
+                result = batch_backend.process_batch(job_id, images_data, classification)
+                print(f"[BACKEND] Batch processing complete!")
+                print(f"[BACKEND] ======== REQUEST COMPLETE ========\n")
+
+                return jsonify(result)
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/batch/backend/status/<job_id>", methods=["GET"])
+        def batch_get_status(job_id):
+            """Get status of a batch processing job"""
+            try:
+                status = batch_backend.get_job_status(job_id)
+                return jsonify(status)
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/batch/backend/export/<job_id>", methods=["GET"])
+        def batch_export(job_id):
+            """Export batch results as ZIP file"""
+            try:
+                # Get classification from query params (JSON string)
+                classification_json = request.args.get("classification", "{}")
+                import json
+
+                classification = json.loads(classification_json)
+
+                zip_data = batch_backend.create_export_zip(job_id, classification)
+
+                return send_file(
+                    BytesIO(zip_data),
+                    mimetype="application/zip",
+                    as_attachment=True,
+                    download_name=f"batch_results_{job_id[:8]}.zip",
+                )
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @self.app.route("/batch/calculate_distribution", methods=["POST"])
+        def batch_calculate_distribution():
+            """Calculate spatial distribution of phases across batch"""
+            try:
+                data = request.json
+                metadata = data.get("metadata", [])
+                fractions = data.get("fractions", [])
+                classification_config = data.get("classification", {})
+
+                from .batch_processor import BatchProcessor
+
+                processor = BatchProcessor(classification_config)
+                distribution = processor.calculate_spatial_distribution(metadata, fractions)
+
+                return jsonify({"status": "success", "distribution": distribution})
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
+
     def run(self):
         """Start the web server"""
         print(f"Starting web interface at http://localhost:{self.port}")
         print(f"Image: {self.image_path}")
         print(f"Output directory: {self.output_dir}")
-        print(f"Classification algorithm: LAB color space thresholding with B/C zoning")
+        print("Classification algorithm: LAB color space thresholding with B/C zoning")
         self.app.run(host="0.0.0.0", port=self.port, debug=True)
 
 

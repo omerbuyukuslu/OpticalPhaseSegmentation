@@ -2976,8 +2976,39 @@ class InteractiveSegmentation {
             return;
         }
         
+        const xml = this.exportClassificationXML();
+        
+        // Download the XML file
+        const blob = new Blob([xml], { type: 'application/xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `classification_${new Date().toISOString().replace(/[:.]/g, '-')}.xml`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        this.setStatus('Classification saved successfully', 'success');
+    }
+    
+    // Check if classification can be exported (at least one phase with LAB ranges)
+    checkCanExportClassification() {
+        if (this.phases.size === 0) return false;
+        
+        // Check if at least one phase has been classified (has LAB ranges)
+        for (const [phaseId, phase] of this.phases) {
+            if (phase.labRanges) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Export classification as XML string (without downloading)
+    exportClassificationXML() {
         // Build XML document
-        let xml = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n';;
+        let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
         xml += '<Classification>\n';
         xml += '  <Metadata>\n';
         xml += `    <CreatedDate>${new Date().toISOString()}</CreatedDate>\n`;
@@ -2989,6 +3020,15 @@ class InteractiveSegmentation {
             xml += `    <Phase id="${phaseId}">\n`;
             xml += `      <Name>${this.escapeXml(phase.name)}</Name>\n`;
             xml += `      <Color>${phase.color}</Color>\n`;
+            
+            // Save LAB ranges if available
+            if (phase.labRanges) {
+                xml += '      <LABRanges>\n';
+                xml += `        <L min="${phase.labRanges.L.min}" max="${phase.labRanges.L.max}" />\n`;
+                xml += `        <A min="${phase.labRanges.a.min}" max="${phase.labRanges.a.max}" />\n`;
+                xml += `        <B min="${phase.labRanges.b.min}" max="${phase.labRanges.b.max}" />\n`;
+                xml += '      </LABRanges>\n';
+            }
             
             // Save samples
             if (phase.samples && phase.samples.length > 0) {
@@ -3010,7 +3050,7 @@ class InteractiveSegmentation {
                 xml += '      </RGBZone>\n';
             }
             
-            // Save Brightness/Contrast zone (now using brightness and contrast properties)
+            // Save Brightness/Contrast zone
             if (phase.bcZone && phase.bcZone.length > 0) {
                 xml += '      <BCZone>\n';
                 for (const vertex of phase.bcZone) {
@@ -3025,18 +3065,7 @@ class InteractiveSegmentation {
         xml += '  </Phases>\n';
         xml += '</Classification>\n';
         
-        // Download the XML file
-        const blob = new Blob([xml], { type: 'application/xml' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `classification_${new Date().toISOString().replace(/[:.]/g, '-')}.xml`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        this.setStatus('Classification saved successfully', 'success');
+        return xml;
     }
     
     escapeXml(text) {
@@ -3159,6 +3188,27 @@ class InteractiveSegmentation {
                 this.updatePhaseStatistics();
                 
                 this.setStatus(`Loaded ${this.phases.size} phases from file`, 'success');
+                
+                // Automatically transfer to batch processor if available
+                if (window.batchProcessor && this.checkCanExportClassification()) {
+                    setTimeout(() => {
+                        try {
+                            const classificationXML = this.exportClassificationXML();
+                            const parser = new DOMParser();
+                            const xmlDoc = parser.parseFromString(classificationXML, 'text/xml');
+                            window.batchProcessor.classification = window.batchProcessor.parseClassificationXML(xmlDoc);
+                            
+                            // Update batch status if function exists
+                            if (typeof updateBatchClassificationStatus === 'function') {
+                                updateBatchClassificationStatus();
+                            }
+                            
+                            console.log('Classification automatically transferred to batch processor');
+                        } catch (err) {
+                            console.error('Error auto-transferring to batch:', err);
+                        }
+                    }, 100);
+                }
                 
             } catch (error) {
                 console.error('Error loading classification:', error);
@@ -4449,6 +4499,9 @@ class InteractiveSegmentation {
 let segmentation;
 document.addEventListener('DOMContentLoaded', () => {
     segmentation = new InteractiveSegmentation();
+    
+    // Make globally accessible for batch processing
+    window.phaseSegmentation = segmentation;
     
     // Handle image upload
     const uploadInput = document.getElementById('upload-image-input');

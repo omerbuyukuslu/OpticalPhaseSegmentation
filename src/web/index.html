@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Watershed Segmentation - Beta</title>
+    <title>Optical Phase Segmentation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -32,31 +33,91 @@
         .phase-stacked-checkbox:hover {
             transform: scale(1.1);
         }
+        
+        /* Tab styling */
+        .tab-button {
+            position: relative;
+            padding: 12px 24px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+        
+        .tab-button:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+        
+        .tab-button.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+            background-color: rgba(59, 130, 246, 0.05);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
-    <div class="container mx-auto px-3 py-4 max-w-[1800px]">
-        <!-- Header -->
-        <header class="text-center mb-4">
-            <h1 class="text-3xl font-bold text-gray-800 mb-2">
-                LAB Zone-Based Phase Classification
-                <span class="inline-block bg-blue-500 text-white text-xs font-semibold px-2 py-1 rounded-full ml-2">Beta</span>
-            </h1>
-            <p class="text-sm text-gray-600">Sample pixels → View LAB distribution → Drag to set ranges → Classify image</p>
+    <div class="max-w-[1920px] mx-auto">
+        <!-- Top Navigation Bar -->
+        <nav class="bg-white shadow-md">
+            <div class="px-6 py-3">
+                <div class="flex items-center justify-between">
+                    <!-- Left: App Title & Tabs -->
+                    <div class="flex items-center gap-8">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                                <span class="text-white font-bold text-xl">OP</span>
+                            </div>
+                            <div>
+                                <h1 class="text-lg font-bold text-gray-800">Optical Phase Segmentation</h1>
+                                <p class="text-xs text-gray-500">LAB Color Space Classification</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Tab Navigation -->
+                        <div class="flex items-center gap-2 border-b border-gray-200">
+                            <button id="tab-phase-btn" class="tab-button active" onclick="switchTab('phase')">
+                                Phase Segmentation
+                            </button>
+                            <button id="tab-batch-btn" class="tab-button" onclick="switchTab('batch')">
+                                Batch Processing
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+        
+        <!-- Tab Content Container -->
+        <div class="px-3 py-4">
             
-            <!-- Save/Load Classification Controls -->
-            <div class="mt-3 flex justify-center gap-3">
+        <!-- PHASE SEGMENTATION TAB -->
+        <div id="phase-tab" class="tab-content active">
+        
+        <!-- Phase Segmentation Header with Save/Load -->
+        <div class="mb-4 flex justify-between items-center">
+            <div>
+                <h2 class="text-2xl font-bold text-gray-800">Phase Segmentation</h2>
+                <p class="text-sm text-gray-600">Sample pixels → Set LAB ranges → Classify image</p>
+            </div>
+            <div class="flex items-center gap-3">
                 <button id="save-classification-btn" 
-                        class="px-4 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors font-medium shadow-md flex items-center gap-2">
-                    Save Classification
+                        class="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors font-medium shadow-sm">
+                    💾 Save Classification
                 </button>
                 <label for="load-classification-input" 
-                       class="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-md cursor-pointer flex items-center gap-2">
-                    Load Classification
+                       class="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm cursor-pointer">
+                    📁 Load Classification
                     <input type="file" id="load-classification-input" accept=".xml" class="hidden">
                 </label>
             </div>
-        </header>
+        </div>
         
         <!-- Main Content Grid: LEFT = Controls (33%), RIGHT = Image/Graphs (67%) -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
@@ -361,8 +422,459 @@
                 </div>
             </div>
         </div>
+        </div> <!-- End Phase Segmentation Tab -->
+        
+        <!-- BATCH PROCESSING TAB -->
+        <div id="batch-tab" class="tab-content">
+            <div class="max-w-7xl mx-auto">
+                
+                <!-- Batch Processing Header -->
+                <div class="mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">Batch Processing</h2>
+                    <p class="text-sm text-gray-600">Apply saved classification to multiple images with spatial positioning</p>
+                </div>
+                
+                <!-- Main Grid -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    
+                    <!-- Left Column: Setup & Upload -->
+                    <div class="lg:col-span-1 space-y-4">
+                        
+                        <!-- Step 1: Classification Status -->
+                        <div class="bg-white rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Step 1: Classification</h3>
+                            
+                            <!-- Classification Status Display -->
+                            <div id="batch-classification-status" class="mb-3">
+                                <div class="bg-gray-50 border-2 border-gray-300 rounded-lg p-3">
+                                    <p class="text-sm text-gray-600 italic mb-1">No classification available</p>
+                                    <p class="text-xs text-gray-500">
+                                        Use one of the buttons below to load a classification
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <!-- Classification Loading Buttons -->
+                            <div class="space-y-2">
+                                <button id="load-previous-classification-btn" 
+                                        class="w-full px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                        onclick="loadClassificationFromPhaseTab()"
+                                        disabled>
+                                    📋 Load Previous Classification
+                                    <span class="block text-xs mt-0.5 opacity-90">From Phase Segmentation tab</span>
+                                </button>
+                                
+                                <label for="batch-load-classification-input" 
+                                       class="block w-full px-4 py-2 bg-indigo-600 text-white text-sm text-center rounded-lg hover:bg-indigo-700 transition-colors font-medium shadow-sm cursor-pointer">
+                                    📁 Upload Classification File
+                                    <span class="block text-xs mt-0.5 opacity-90">From saved XML file</span>
+                                    <input type="file" id="batch-load-classification-input" accept=".xml" class="hidden">
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Define Units -->
+                        <div class="bg-white rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Step 2: Define Units</h3>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Distance Unit</label>
+                                <input type="text" id="distance-unit" placeholder="e.g., μm, mm, nm" 
+                                       value="μm"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">This will be used for all spatial measurements</p>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Upload Images -->
+                        <div class="bg-white rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Step 3: Upload Images</h3>
+                            <label for="batch-images-upload" 
+                                   class="block w-full px-4 py-2 bg-purple-600 text-white text-center rounded-lg hover:bg-purple-700 transition-colors cursor-pointer">
+                                Select Multiple Images
+                                <input type="file" id="batch-images-upload" accept="image/*" multiple class="hidden">
+                            </label>
+                            <div id="upload-count" class="mt-2 text-sm text-gray-600 italic">
+                                0 images uploaded
+                            </div>
+                        </div>
+
+                        <!-- Step 4: Process Button -->
+                        <div class="bg-white rounded-lg shadow-lg p-4">
+                            <button id="process-batch-btn" disabled
+                                    class="w-full px-6 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed">
+                                🚀 Process Batch
+                            </button>
+                            <div id="process-status" class="mt-2 text-sm text-center text-gray-600"></div>
+                            <p class="mt-3 text-xs text-gray-500 text-center">
+                                ℹ️ Processing is done on the server for optimal performance with high-resolution images (40MB+)
+                            </p>
+                        </div>
+
+                    </div>
+
+                    <!-- Middle & Right Columns: Image List & Visualization -->
+                    <div class="lg:col-span-2 space-y-4">
+                        
+                        <!-- 2D Spatial Layout Visualization -->
+                        <div class="bg-white rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Spatial Layout (2D Schematic)</h3>
+                            <canvas id="spatial-canvas" width="800" height="400" 
+                                    class="border border-gray-300 rounded w-full" 
+                                    style="max-height: 400px;">
+                            </canvas>
+                            <p class="text-xs text-gray-500 mt-2">
+                                Each rectangle represents an image at its specified coordinates.
+                            </p>
+                        </div>
+                        
+                        <!-- Images List with Metadata -->
+                        <div class="bg-white rounded-lg shadow-lg p-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Image Coordinates</h3>
+                            <p class="text-sm text-gray-600 mb-3">
+                                For each image, specify the corner coordinates: (X₀, Y₀) = bottom-left, (X₁, Y₁) = top-right
+                            </p>
+                            <div id="images-list" class="space-y-3">
+                                <p class="text-gray-500 text-sm italic">No images uploaded yet</p>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Results Section (Hidden initially) -->
+                <div id="results-section" class="mt-6 space-y-6" style="display: none;">
+                    
+                    <!-- Stacked Images View -->
+                    <div class="bg-white rounded-lg shadow-lg p-4">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-lg font-semibold text-gray-800">Stacked Images</h3>
+                            <div class="flex gap-2">
+                                <button id="toggle-original-btn" 
+                                        class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600">
+                                    Show Original
+                                </button>
+                                <button id="toggle-classified-btn" 
+                                        class="px-3 py-1 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400">
+                                    Show Classified
+                                </button>
+                            </div>
+                        </div>
+                        <div id="stacked-images-container" class="overflow-auto max-h-96 border border-gray-300 rounded">
+                            <!-- Stacked images will be rendered here -->
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2 italic">💡 Click on any image to view full size</p>
+                    </div>
+
+                    <!-- Phase Distribution Plot -->
+                    <div class="bg-white rounded-lg shadow-lg p-4">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-lg font-semibold text-gray-800">Phase Distribution vs. Distance</h3>
+                            <button id="toggle-legend-btn" 
+                                    class="px-3 py-1 bg-gray-600 text-white text-sm rounded hover:bg-gray-700">
+                                Toggle Legend
+                            </button>
+                        </div>
+                        <div id="distribution-plot" style="width: 100%; height: 400px;"></div>
+                    </div>
+
+                    <!-- Export Options -->
+                    <div class="bg-white rounded-lg shadow-lg p-4">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-3">Export Results</h3>
+                        <div class="flex gap-3">
+                            <button id="export-images-btn" 
+                                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                                Export Stacked Images
+                            </button>
+                            <button id="export-data-btn" 
+                                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                                📦 Export Results (ZIP)
+                            </button>
+                            <button id="export-plot-btn" 
+                                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                                Export Plot
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div> <!-- End Batch Processing Tab -->
+        
+        </div> <!-- End Tab Content Container -->
     </div>
     
-    <script src="script.js?v=2.1"></script>
+    <!-- Tab Switching Script -->
+    <script>
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            if (tabName === 'phase') {
+                document.getElementById('phase-tab').classList.add('active');
+                document.getElementById('tab-phase-btn').classList.add('active');
+            } else if (tabName === 'batch') {
+                document.getElementById('batch-tab').classList.add('active');
+                document.getElementById('tab-batch-btn').classList.add('active');
+                
+                // Update batch classification status
+                updateBatchClassificationStatus();
+            }
+        }
+        
+        function updateBatchClassificationStatus() {
+            const statusDiv = document.getElementById('batch-classification-status');
+            const loadPrevBtn = document.getElementById('load-previous-classification-btn');
+            if (!statusDiv) return;
+            
+            // Check if batch processor already has a loaded classification
+            if (window.batchProcessor && window.batchProcessor.classification && 
+                       Object.keys(window.batchProcessor.classification.phases).length > 0) {
+                // Batch processor already has a classification loaded
+                const phaseCount = Object.keys(window.batchProcessor.classification.phases).length;
+                const phaseNames = Object.values(window.batchProcessor.classification.phases)
+                    .map(p => p.name).join(', ');
+                
+                statusDiv.innerHTML = `
+                    <div class="bg-green-50 border-2 border-green-500 rounded-lg p-3">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1">
+                                <p class="text-sm font-bold text-green-700 mb-1">✓ Classification Ready</p>
+                                <p class="text-xs text-gray-700"><strong>${phaseCount} phase${phaseCount !== 1 ? 's' : ''}:</strong> ${phaseNames}</p>
+                            </div>
+                            <button class="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700 transition-colors ml-2"
+                                    onclick="clearBatchClassification()">
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                `;
+                
+                // Disable "Load Previous" button when classification is already loaded
+                if (loadPrevBtn) loadPrevBtn.disabled = true;
+                
+                // Enable processing
+                window.batchProcessor.checkReadyToProcess();
+                return;
+            }
+            
+            // Check if we can use current classification from phase segmentation
+            if (window.phaseSegmentation && window.phaseSegmentation.checkCanExportClassification()) {
+                const phaseCount = window.phaseSegmentation.phases.size;
+                const phaseNames = Array.from(window.phaseSegmentation.phases.values())
+                    .map(p => p.name).join(', ');
+                
+                statusDiv.innerHTML = `
+                    <div class="bg-blue-50 border-2 border-blue-400 rounded-lg p-3">
+                        <p class="text-sm font-semibold text-blue-700 mb-1">✓ Classification available from Phase Segmentation</p>
+                        <p class="text-xs text-gray-700"><strong>${phaseCount} phase${phaseCount !== 1 ? 's' : ''}:</strong> ${phaseNames}</p>
+                        <p class="text-xs text-blue-600 mt-1">Click "Load Previous Classification" below to use it</p>
+                    </div>
+                `;
+                
+                // Enable "Load Previous" button
+                if (loadPrevBtn) loadPrevBtn.disabled = false;
+            } else {
+                statusDiv.innerHTML = `
+                    <div class="bg-gray-50 border-2 border-gray-300 rounded-lg p-3">
+                        <p class="text-sm text-gray-600 italic mb-1">No classification available</p>
+                        <p class="text-xs text-gray-500">
+                            Use one of the buttons below to load a classification
+                        </p>
+                    </div>
+                `;
+                
+                // Disable "Load Previous" button
+                if (loadPrevBtn) loadPrevBtn.disabled = true;
+            }
+        }
+        
+        function loadClassificationFromPhaseTab() {
+            if (window.phaseSegmentation && window.batchProcessor) {
+                try {
+                    // Direct transfer of classification object (more reliable than XML)
+                    const phases = window.phaseSegmentation.phases;
+                    
+                    if (!phases || phases.size === 0) {
+                        alert('No phases defined in Phase Segmentation. Please create a classification first.');
+                        return;
+                    }
+                    
+                    // Convert Map to object format for batch processor
+                    const classification = {
+                        phases: {},
+                        unit: window.batchProcessor.unit
+                    };
+                    
+                    let validPhaseCount = 0;
+                    let labCount = 0;
+                    let bcCount = 0;
+                    for (const [phaseId, phaseData] of phases) {
+                        classification.phases[phaseId] = {
+                            id: parseInt(phaseId),
+                            name: phaseData.name,
+                            color: phaseData.color,
+                            labRanges: phaseData.labRanges || null,
+                            bcZone: phaseData.bcZone || null
+                        };
+                        
+                        let hasClassification = false;
+                        if (phaseData.labRanges) {
+                            labCount++;
+                            hasClassification = true;
+                        }
+                        if (phaseData.bcZone && phaseData.bcZone.length > 0) {
+                            bcCount++;
+                            if (!hasClassification) validPhaseCount++; 
+                            hasClassification = true;
+                        }
+                        if (hasClassification) {
+                            validPhaseCount++;
+                        }
+                    }
+                    
+                    if (validPhaseCount === 0) {
+                        alert('No phases have classification data.\n\nEach phase must have either:\n• LAB ranges (from LAB classification), or\n• B/C zone (from Brightness/Contrast classification)\n\nPlease classify some samples first.');
+                        return;
+                    }
+                    
+                    console.log(`Valid phases: ${validPhaseCount} (${labCount} LAB, ${bcCount} B/C)`);
+                    
+                    console.log('Transferring classification:', classification);
+                    console.log(`Valid phases with LAB ranges: ${validPhaseCount}`);
+                    
+                    // Set classification in batch processor
+                    window.batchProcessor.classification = classification;
+                    
+                    // Update status
+                    updateBatchClassificationStatus();
+                    
+                    // Check if ready to process
+                    window.batchProcessor.checkReadyToProcess();
+                    
+                    console.log('Classification transferred successfully');
+                } catch (error) {
+                    console.error('Error transferring classification:', error);
+                    alert('Failed to transfer classification. Please check console for details.');
+                }
+            }
+        }
+        
+        function clearBatchClassification() {
+            if (window.batchProcessor) {
+                window.batchProcessor.classification = null;
+                updateBatchClassificationStatus();
+                window.batchProcessor.checkReadyToProcess();
+            }
+        }
+        
+        // Handle loading classification from file into batch processor
+        document.addEventListener('DOMContentLoaded', () => {
+            const loadInput = document.getElementById('load-classification-input');
+            if (loadInput) {
+                // Add new handler that also updates batch processor
+                loadInput.addEventListener('change', (e) => {
+                    // Give the phase segmentation time to load
+                    setTimeout(() => {
+                        // Update batch status if on batch tab
+                        const batchTab = document.getElementById('batch-tab');
+                        if (batchTab && batchTab.classList.contains('active')) {
+                            updateBatchClassificationStatus();
+                        }
+                    }, 500);
+                });
+            }
+            
+            // Add handler for batch-specific file upload
+            const batchLoadInput = document.getElementById('batch-load-classification-input');
+            if (batchLoadInput) {
+                batchLoadInput.addEventListener('change', async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    
+                    try {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const parser = new DOMParser();
+                            const xmlDoc = parser.parseFromString(event.target.result, 'text/xml');
+                            
+                            // Check for XML parsing errors
+                            const parserError = xmlDoc.querySelector('parsererror');
+                            if (parserError) {
+                                console.error('XML parsing error:', parserError.textContent);
+                                alert('Invalid XML file. Please check the file format.');
+                                return;
+                            }
+                            
+                            // Parse and load into batch processor
+                            if (window.batchProcessor) {
+                                console.log('Parsing classification XML...');
+                                const classification = window.batchProcessor.parseClassificationXML(xmlDoc);
+                                console.log('Parsed classification:', classification);
+                                
+                                // Validate classification
+                                if (!classification.phases || Object.keys(classification.phases).length === 0) {
+                                    alert('No phases found in classification file.');
+                                    return;
+                                }
+                                
+                                // Check for LAB ranges or B/C zones
+                                let validPhases = 0;
+                                let labPhases = 0;
+                                let bcPhases = 0;
+                                for (const [phaseId, phaseData] of Object.entries(classification.phases)) {
+                                    console.log(`Phase ${phaseId}:`, phaseData);
+                                    let hasClassification = false;
+                                    
+                                    if (phaseData.labRanges) {
+                                        labPhases++;
+                                        validPhases++;
+                                        hasClassification = true;
+                                        console.log(`  - Has LAB ranges:`, phaseData.labRanges);
+                                    }
+                                    
+                                    if (phaseData.bcZone && phaseData.bcZone.length > 0) {
+                                        bcPhases++;
+                                        if (!hasClassification) validPhases++;
+                                        console.log(`  - Has B/C zone:`, phaseData.bcZone);
+                                    }
+                                    
+                                    if (!hasClassification && (!phaseData.bcZone || phaseData.bcZone.length === 0)) {
+                                        console.warn(`  - Missing both LAB ranges and B/C zone!`);
+                                    }
+                                }
+                                
+                                if (validPhases === 0) {
+                                    alert('No phases with classification data found.\n\nEach phase must have either:\n• LAB ranges (from LAB classification), or\n• B/C zone (from Brightness/Contrast classification)\n\nPlease create a classification with classified samples in Phase Segmentation first.');
+                                    return;
+                                }
+                                
+                                console.log(`Loaded ${Object.keys(classification.phases).length} phases: ${labPhases} with LAB ranges, ${bcPhases} with B/C zones`);
+                                
+                                window.batchProcessor.classification = classification;
+                                updateBatchClassificationStatus();
+                                window.batchProcessor.checkReadyToProcess();
+                            }
+                        };
+                        reader.readAsText(file);
+                        
+                        // Reset input to allow loading same file again
+                        e.target.value = '';
+                    } catch (error) {
+                        console.error('Error loading classification file:', error);
+                        alert('Error loading classification file. Please ensure it is a valid XML file.');
+                    }
+                });
+            }
+        });
+    </script>
+    
+    <script src="script.js?v=2.8"></script>
+    <script src="batch.js?v=3.2"></script>
 </body>
 </html>

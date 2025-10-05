@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Processing - Optical Phase Segmentation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-6 max-w-7xl">
+        <!-- Header -->
+        <header class="mb-6">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800">Batch Processing</h1>
+                    <p class="text-sm text-gray-600 mt-1">Apply saved classification to multiple images</p>
+                </div>
+                <a href="/" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+                    ← Back to Main
+                </a>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- Left Column: Setup & Upload -->
+            <div class="lg:col-span-1 space-y-4">
+                
+                <!-- Step 1: Load Classification -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">Step 1: Load Classification</h3>
+                    <p class="text-sm text-gray-600 mb-3">Load your saved phase classification settings</p>
+                    <label for="load-classification-batch" 
+                           class="block w-full px-4 py-2 bg-blue-600 text-white text-center rounded-lg hover:bg-blue-700 transition-colors cursor-pointer">
+                        Load Classification XML
+                        <input type="file" id="load-classification-batch" accept=".xml" class="hidden">
+                    </label>
+                    <div id="classification-status" class="mt-2 text-sm text-gray-600 italic">
+                        No classification loaded
+                    </div>
+                </div>
+
+                <!-- Step 2: Define Units -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">Step 2: Define Units</h3>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Distance Unit</label>
+                        <input type="text" id="distance-unit" placeholder="e.g., μm, mm, nm" 
+                               value="μm"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">This will be used for all spatial measurements</p>
+                    </div>
+                </div>
+
+                <!-- Step 3: Upload Images -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">Step 3: Upload Images</h3>
+                    <label for="batch-images-upload" 
+                           class="block w-full px-4 py-2 bg-purple-600 text-white text-center rounded-lg hover:bg-purple-700 transition-colors cursor-pointer">
+                        Select Multiple Images
+                        <input type="file" id="batch-images-upload" accept="image/*" multiple class="hidden">
+                    </label>
+                    <div id="upload-count" class="mt-2 text-sm text-gray-600 italic">
+                        0 images selected
+                    </div>
+                </div>
+
+                <!-- Step 4: Process Button -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <button id="process-batch-btn" disabled
+                            class="w-full px-6 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        Process Batch
+                    </button>
+                    <div id="process-status" class="mt-2 text-sm text-center text-gray-600"></div>
+                </div>
+
+            </div>
+
+            <!-- Middle & Right Columns: Image List & Visualization -->
+            <div class="lg:col-span-2 space-y-4">
+                
+                <!-- 2D Spatial Layout Visualization -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">Spatial Layout (2D Schematic)</h3>
+                    <canvas id="spatial-canvas" width="800" height="400" 
+                            class="border border-gray-300 rounded w-full" 
+                            style="max-height: 400px;">
+                    </canvas>
+                    <p class="text-xs text-gray-500 mt-2">
+                        Each rectangle represents an image at its specified coordinates. Click on images below to define their positions.
+                    </p>
+                </div>
+                
+                <!-- Images List with Metadata -->
+                <div class="bg-white rounded-lg shadow-lg p-4">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-3">Image Coordinates</h3>
+                    <p class="text-sm text-gray-600 mb-3">
+                        For each image, specify the corner coordinates: (X₀, Y₀) = bottom-left, (X₁, Y₁) = top-right
+                    </p>
+                    <div id="images-list" class="space-y-3">
+                        <p class="text-gray-500 text-sm italic">No images uploaded yet</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Results Section (Hidden initially) -->
+        <div id="results-section" class="mt-6 space-y-6" style="display: none;">
+            
+            <!-- Stacked Images View -->
+            <div class="bg-white rounded-lg shadow-lg p-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-lg font-semibold text-gray-800">Stacked Images</h3>
+                    <div class="flex gap-2">
+                        <button id="toggle-original-btn" 
+                                class="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600">
+                            Show Original
+                        </button>
+                        <button id="toggle-classified-btn" 
+                                class="px-3 py-1 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400">
+                            Show Classified
+                        </button>
+                        <button id="toggle-legend-btn" 
+                                class="px-3 py-1 bg-gray-600 text-white text-sm rounded hover:bg-gray-700">
+                            Toggle Legend
+                        </button>
+                    </div>
+                </div>
+                <div id="stacked-images-container" class="overflow-auto max-h-96 border border-gray-300 rounded">
+                    <!-- Stacked images will be rendered here -->
+                </div>
+            </div>
+
+            <!-- Phase Distribution Plot -->
+            <div class="bg-white rounded-lg shadow-lg p-4">
+                <h3 class="text-lg font-semibold text-gray-800 mb-3">Phase Distribution vs. Distance</h3>
+                <div id="distribution-plot" style="width: 100%; height: 400px;"></div>
+            </div>
+
+            <!-- Export Options -->
+            <div class="bg-white rounded-lg shadow-lg p-4">
+                <h3 class="text-lg font-semibold text-gray-800 mb-3">Export Results</h3>
+                <div class="flex gap-3">
+                    <button id="export-images-btn" 
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                        Export Stacked Images
+                    </button>
+                    <button id="export-data-btn" 
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                        Export Data (CSV)
+                    </button>
+                    <button id="export-plot-btn" 
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                        Export Plot
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="batch.js?v=2.0"></script>
+</body>
+</html>

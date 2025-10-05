@@ -1,4 +1,10 @@
 # Data files
+src\data\L9S19-reg1.TIF
+
+# Documentation (except README)
+docs/
+src/data/
+src/out/
 
 # Python
 __pycache__/
