@@ -1,0 +1,16 @@
+[project]
+name = "imagesegmentation-v02"
+version = "0.1.0"
+description = "Interactive Watershed Segmentation Tool with Web Interface for Microscopy Images"
+readme = "README_seeded_watershed.md"
+requires-python = ">=3.8"
+dependencies = [
+    "opencv-python>=4.5.0",
+    "numpy>=1.20.0",
+    "Flask>=2.0.0",
+    "Pillow>=8.0.0"
+]
+
+[project.scripts]
+watershed-cli = "src.segment.cli:main"
+watershed-web = "src.segment.web_interface:main"
